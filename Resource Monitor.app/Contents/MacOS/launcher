@@ -1,0 +1,51 @@
+#!/bin/bash
+# Resource Monitor.app launcher.
+# Runs python3 menubar.py from the bundled Resources/ directory, silently.
+# All output goes to ~/Library/Logs/ResourceMonitor.log for debugging.
+
+set -u
+
+LOG="$HOME/Library/Logs/ResourceMonitor.log"
+mkdir -p "$(dirname "$LOG")"
+
+# All output below goes to the log file (no Terminal window).
+exec >>"$LOG" 2>&1
+echo "==== $(date) — launching Resource Monitor ===="
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+RES="$HERE/../Resources"
+cd "$RES"
+
+# Find python3. Prefer system Python on macOS.
+PY="$(command -v python3 || true)"
+if [ -z "$PY" ]; then
+    osascript -e 'display dialog "Python 3 is required.\n\nInstall the Xcode Command Line Tools by opening Terminal and running:\n\n    xcode-select --install" buttons {"OK"} default button "OK" with icon caution with title "Resource Monitor"' >/dev/null 2>&1 || true
+    exit 1
+fi
+echo "Python: $PY ($("$PY" --version 2>&1))"
+
+# First-run / one-time dependency install. Idempotent — pip is a no-op if
+# everything is already at the pinned version.
+DEPS=(psutil "pyobjc-core<11" "pyobjc-framework-Cocoa<11" rumps)
+NEED_INSTALL=0
+for mod in psutil rumps AppKit; do
+    if ! "$PY" -c "import $mod" >/dev/null 2>&1; then
+        NEED_INSTALL=1
+        break
+    fi
+done
+
+if [ "$NEED_INSTALL" = "1" ]; then
+    echo "Installing dependencies (one-time)..."
+    # Show a friendly notification while pip runs (it can take 20–60s).
+    osascript -e 'display notification "Installing dependencies — this happens once and takes about a minute." with title "Resource Monitor" subtitle "First launch"' >/dev/null 2>&1 || true
+
+    "$PY" -m pip install --user --quiet "${DEPS[@]}" 2>>"$LOG" \
+        || "$PY" -m pip install --user --quiet --break-system-packages "${DEPS[@]}" 2>>"$LOG" \
+        || "$PY" -m pip install --user "${DEPS[@]}"
+
+    osascript -e 'display notification "Look at the top-right of your screen for CPU %" with title "Resource Monitor" subtitle "Ready"' >/dev/null 2>&1 || true
+fi
+
+echo "Starting menubar.py..."
+exec "$PY" menubar.py
